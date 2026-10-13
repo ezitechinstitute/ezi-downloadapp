@@ -13,6 +13,19 @@ class ProcessDownloadJob implements ShouldQueue
 
     protected $download;
 
+    /**
+     * Seconds to wait before each attempt. The first is immediate, and the
+     * number of entries is the number of attempts.
+     *
+     * Two attempts, not three. The real waiting is done by DownloadThrottle,
+     * which holds every job back for a minute once a site says it is busy, so
+     * the second attempt already lands about a minute after the first — past
+     * the roughly 49 seconds Instagram's block was measured to last. A third
+     * would put someone past two minutes of staring at a progress bar for a
+     * video that is most likely not coming.
+     */
+    private const RETRY_DELAYS = [0, 2];
+
     public function __construct(Download $download)
     {
         $this->download = $download;
@@ -75,11 +88,17 @@ class ProcessDownloadJob implements ShouldQueue
                 | continue using the existing command.
                 */
 
+                /*
+                 * No user-agent of our own. An Android one used to be forced
+                 * here, left over from when this also served YouTube, and it
+                 * sent Facebook to m.facebook.com, whose pages yt-dlp cannot
+                 * read — "Cannot parse data" was the single largest cause of
+                 * failure on this server until it was removed. yt-dlp picks a
+                 * header set that matches whichever browser it is pretending
+                 * to be, and getting in the way of that only breaks things.
+                 */
                 $command =
                     "\"{$ytDlpPath}\" " .
-                    "--extractor-args \"youtube:player-client=android\" " .
-                    "--user-agent \"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " .
-                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36\" " .
                     "-f \"best[ext=mp4]/best\" " .
                     "--no-playlist " .
                     "-o \"{$outputTemplate}\" " .
@@ -90,19 +109,74 @@ class ProcessDownloadJob implements ShouldQueue
                 "Executing yt-dlp for ID {$this->download->id}: {$command}"
             );
 
+            /*
+            |--------------------------------------------------------------------------
+            | Run it, and try again when the site was merely busy
+            |--------------------------------------------------------------------------
+            | A third of all downloads were being recorded as failures, and the
+            | largest single cause was Instagram answering a burst of requests
+            | from this one server with an empty body. The same link works
+            | seconds later. Giving up on the first attempt turned a pause the
+            | person would never have noticed into a failure they did.
+            |
+            | A link that never held a video is not retried: three attempts at
+            | a photo post is only three times the wait before the same answer.
+            */
+
             $output = [];
             $resultCode = 0;
 
-            exec($command . " 2>&1", $output, $resultCode);
+            $platform = $this->download->platform ?? 'unknown';
 
-            Log::info(
-                "yt-dlp output for ID {$this->download->id}: " .
-                implode("\n", $output)
-            );
+            foreach (self::RETRY_DELAYS as $attempt => $delay) {
+                $output = [];
+                $resultCode = 0;
 
-            Log::info(
-                "yt-dlp exit code: {$resultCode}"
-            );
+                // Shared across every job, so one busy answer quiets them all.
+                DownloadThrottle::before($platform);
+
+                exec($command . " 2>&1", $output, $resultCode);
+
+                $text = implode("\n", $output);
+
+                Log::info(
+                    "yt-dlp attempt " . ($attempt + 1) . " for ID {$this->download->id} " .
+                    "exited {$resultCode}: {$text}"
+                );
+
+                if ($resultCode === 0) {
+                    DownloadThrottle::answered($platform);
+                    break;
+                }
+
+                if (!DownloadFailure::isTransient($text)) {
+                    DownloadThrottle::answered($platform);
+                    break;
+                }
+
+                // The site is turning requests away: every job now waits,
+                // not just this one.
+                DownloadThrottle::busy($platform);
+
+                if ($attempt === count(self::RETRY_DELAYS) - 1) {
+                    break;
+                }
+
+                $wait = self::RETRY_DELAYS[$attempt + 1];
+
+                Log::info(
+                    "ID {$this->download->id}: the site was busy, waiting {$wait}s " .
+                    "before attempt " . ($attempt + 2)
+                );
+
+                // A leftover part-file would otherwise have yt-dlp resume a
+                // download that never properly started.
+                foreach (glob($outputPath . '/' . $this->download->id . '.*') as $leftover) {
+                    @unlink($leftover);
+                }
+
+                sleep($wait);
+            }
 
             /*
             |--------------------------------------------------------------------------
@@ -137,15 +211,14 @@ class ProcessDownloadJob implements ShouldQueue
                 } else {
 
                     throw new \Exception(
-                        "Downloaded file not found in directory."
+                        "This video could not be saved. Please try again."
                     );
                 }
 
             } else {
 
                 throw new \Exception(
-                    "yt-dlp failed with code {$resultCode}: " .
-                    implode("\n", $output)
+                    DownloadFailure::explain(implode("\n", $output))
                 );
             }
 
