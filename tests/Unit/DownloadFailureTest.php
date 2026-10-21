@@ -102,6 +102,23 @@ class DownloadFailureTest extends TestCase
         );
     }
 
+    /**
+     * Instagram words its rate limit as a login redirect. Matching on "login"
+     * told people a public post was private (21 Oct 2026).
+     */
+    public function test_a_rate_limit_login_redirect_is_busy_not_private(): void
+    {
+        $output = 'ERROR: [Instagram] Dc8IQPzAPl7: The webpage request was redirected '
+            . 'to the login page. You have exceeded the rate-limit for accessing '
+            . 'posts anonymously. Use --cookies for the authentication.';
+
+        $this->assertTrue(DownloadFailure::isTransient($output));
+        $this->assertSame(
+            'The site was busy and would not answer. Please try again in a minute.',
+            DownloadFailure::explain($output),
+        );
+    }
+
     /** A private post that also timed out is still private. */
     public function test_a_permanent_reason_wins_over_a_transient_one(): void
     {

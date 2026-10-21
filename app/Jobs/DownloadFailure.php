@@ -70,10 +70,39 @@ class DownloadFailure
         ['copyright', 'This video was taken down over copyright.'],
     ];
 
+    /**
+     * The site turning this server away for asking too often.
+     *
+     * Checked before everything else, because Instagram words it as a login
+     * redirect — "redirected to the login page. You have exceeded the
+     * rate-limit for accessing posts anonymously" — and matching on "login"
+     * told people a public post was private (21 Oct 2026).
+     */
+    private const RATE_LIMITED = [
+        'rate-limit',
+        'rate limit',
+        'too many requests',
+    ];
+
+    private static function isRateLimited(string $haystack): bool
+    {
+        foreach (self::RATE_LIMITED as $needle) {
+            if (str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** Whether another attempt at [$output] could still succeed. */
     public static function isTransient(string $output): bool
     {
         $haystack = strtolower($output);
+
+        if (self::isRateLimited($haystack)) {
+            return true;
+        }
 
         foreach (self::EXPLANATIONS as [$needle, $_]) {
             // A permanent reason wins even when a transient phrase also
@@ -102,6 +131,10 @@ class DownloadFailure
     public static function explain(string $output): string
     {
         $haystack = strtolower($output);
+
+        if (self::isRateLimited($haystack)) {
+            return 'The site was busy and would not answer. Please try again in a minute.';
+        }
 
         foreach (self::EXPLANATIONS as [$needle, $explanation]) {
             if (str_contains($haystack, $needle)) {
