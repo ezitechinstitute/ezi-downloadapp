@@ -10,6 +10,31 @@ use Illuminate\Http\Request;
 class DownloadController extends Controller
 {
     /**
+     * The phone's account of what happened after it fetched the file.
+     *
+     * Without this, every failure on the phone looked like a success here.
+     * Nothing about the person is sent: the device model and Android version
+     * only, so a failure can be traced to the phones it happens on.
+     */
+    public function phoneReport(Request $request, Download $download)
+    {
+        $validated = $request->validate([
+            'saved' => ['required', 'boolean'],
+            'error' => ['nullable', 'string', 'max:500'],
+            'device' => ['nullable', 'string', 'max:200'],
+        ]);
+
+        $download->update([
+            'phone_status' => $validated['saved'] ? 'saved' : 'failed',
+            'phone_error' => $validated['error'] ?? null,
+            'phone_device' => $validated['device'] ?? null,
+            'phone_reported_at' => now(),
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
      * Create a new download request.
      */
     public function store(Request $request)

@@ -16,9 +16,14 @@ class Download extends Model
         'progress',
         'video_url',
         'error_message',
+        'phone_status',
+        'phone_error',
+        'phone_device',
+        'phone_reported_at',
     ];
 
     protected $casts = [
         'progress' => 'integer',
+        'phone_reported_at' => 'datetime',
     ];
 }
