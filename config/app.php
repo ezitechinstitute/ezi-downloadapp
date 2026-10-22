@@ -123,4 +123,18 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Oldest app build that may keep running
+    |--------------------------------------------------------------------------
+    |
+    | The Android app asks for this at launch. A phone on an older versionCode
+    | gets Play's full-screen update and cannot skip it, so raise this only
+    | when a release fixes something users cannot do without. 0 means newer
+    | versions are offered, never forced.
+    |
+    */
+
+    'min_version_code' => (int) env('APP_MIN_VERSION_CODE', 0),
+
 ];
