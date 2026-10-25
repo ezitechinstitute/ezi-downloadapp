@@ -51,6 +51,8 @@ class ProcessDownloadJob implements ShouldQueue
 
             $outputTemplate = $outputPath . '/' . $this->download->id . '.%(ext)s';
 
+            $photoPostUrl = null;
+
             /*
             |--------------------------------------------------------------------------
             | TikTok
@@ -62,6 +64,10 @@ class ProcessDownloadJob implements ShouldQueue
                 Log::info(
                     "TikTok download requested. ID: {$this->download->id}"
                 );
+
+                // Photo posts come as the same short links as videos, and
+                // yt-dlp cannot download them; they are built here instead.
+                $photoPostUrl = TikTokSlideshow::photoPostUrl($url);
 
                 /*
                  * TikTok short URLs such as vm.tiktok.com/... redirect
@@ -128,54 +134,62 @@ class ProcessDownloadJob implements ShouldQueue
 
             $platform = $this->download->platform ?? 'unknown';
 
-            foreach (self::RETRY_DELAYS as $attempt => $delay) {
-                $output = [];
-                $resultCode = 0;
+            if ($photoPostUrl) {
+                Log::info("ID {$this->download->id} is a TikTok photo post; building a slideshow from {$photoPostUrl}");
 
-                // Shared across every job, so one busy answer quiets them all.
                 DownloadThrottle::before($platform);
+                TikTokSlideshow::make($photoPostUrl, $ytDlpPath, "{$outputPath}/{$this->download->id}.mp4");
+                DownloadThrottle::answered($platform);
+            } else {
+                foreach (self::RETRY_DELAYS as $attempt => $delay) {
+                    $output = [];
+                    $resultCode = 0;
 
-                exec($command . " 2>&1", $output, $resultCode);
+                    // Shared across every job, so one busy answer quiets them all.
+                    DownloadThrottle::before($platform);
 
-                $text = implode("\n", $output);
+                    exec($command . " 2>&1", $output, $resultCode);
 
-                Log::info(
-                    "yt-dlp attempt " . ($attempt + 1) . " for ID {$this->download->id} " .
-                    "exited {$resultCode}: {$text}"
-                );
+                    $text = implode("\n", $output);
 
-                if ($resultCode === 0) {
-                    DownloadThrottle::answered($platform);
-                    break;
+                    Log::info(
+                        "yt-dlp attempt " . ($attempt + 1) . " for ID {$this->download->id} " .
+                        "exited {$resultCode}: {$text}"
+                    );
+
+                    if ($resultCode === 0) {
+                        DownloadThrottle::answered($platform);
+                        break;
+                    }
+
+                    if (!DownloadFailure::isTransient($text)) {
+                        DownloadThrottle::answered($platform);
+                        break;
+                    }
+
+                    // The site is turning requests away: every job now waits,
+                    // not just this one.
+                    DownloadThrottle::busy($platform);
+
+                    if ($attempt === count(self::RETRY_DELAYS) - 1) {
+                        break;
+                    }
+
+                    $wait = self::RETRY_DELAYS[$attempt + 1];
+
+                    Log::info(
+                        "ID {$this->download->id}: the site was busy, waiting {$wait}s " .
+                        "before attempt " . ($attempt + 2)
+                    );
+
+                    // A leftover part-file would otherwise have yt-dlp resume a
+                    // download that never properly started.
+                    foreach (glob($outputPath . '/' . $this->download->id . '.*') as $leftover) {
+                        @unlink($leftover);
+                    }
+
+                    sleep($wait);
                 }
-
-                if (!DownloadFailure::isTransient($text)) {
-                    DownloadThrottle::answered($platform);
-                    break;
-                }
-
-                // The site is turning requests away: every job now waits,
-                // not just this one.
-                DownloadThrottle::busy($platform);
-
-                if ($attempt === count(self::RETRY_DELAYS) - 1) {
-                    break;
-                }
-
-                $wait = self::RETRY_DELAYS[$attempt + 1];
-
-                Log::info(
-                    "ID {$this->download->id}: the site was busy, waiting {$wait}s " .
-                    "before attempt " . ($attempt + 2)
-                );
-
-                // A leftover part-file would otherwise have yt-dlp resume a
-                // download that never properly started.
-                foreach (glob($outputPath . '/' . $this->download->id . '.*') as $leftover) {
-                    @unlink($leftover);
-                }
-
-                sleep($wait);
             }
 
             /*
