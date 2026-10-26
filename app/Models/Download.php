@@ -20,10 +20,15 @@ class Download extends Model
         'phone_error',
         'phone_device',
         'phone_reported_at',
+        'wants_photos',
+        'media_type',
+        'photo_urls',
     ];
 
     protected $casts = [
         'progress' => 'integer',
         'phone_reported_at' => 'datetime',
+        'wants_photos' => 'boolean',
+        'photo_urls' => 'array',
     ];
 }

@@ -194,6 +194,42 @@ class ProcessDownloadJob implements ShouldQueue
 
             /*
             |--------------------------------------------------------------------------
+            | A post with pictures and no video
+            |--------------------------------------------------------------------------
+            | Only for app versions that can put pictures in the gallery; older
+            | ones would save a JPEG as a video, so they keep the old message.
+            */
+
+            if (
+                $resultCode !== 0
+                && $this->download->wants_photos
+                && PhotoPost::supports($platform)
+                && PhotoPost::isPhotoOnly(implode("
+", $output))
+            ) {
+                Log::info("ID {$this->download->id} is a photo post; saving its pictures");
+
+                DownloadThrottle::before($platform);
+                $names = PhotoPost::save($url, $ytDlpPath, $outputPath, $this->download->id);
+                DownloadThrottle::answered($platform);
+
+                $photoUrls = array_map(fn ($n) => asset('storage/downloads/' . $n), $names);
+
+                $this->download->update([
+                    'status' => 'completed',
+                    'progress' => 100,
+                    'media_type' => 'photos',
+                    'photo_urls' => $photoUrls,
+                    'video_url' => $photoUrls[0],
+                ]);
+
+                Log::info("Saved " . count($names) . " pictures for ID {$this->download->id}");
+
+                return;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
             | Download successful
             |--------------------------------------------------------------------------
             */

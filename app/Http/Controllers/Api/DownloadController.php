@@ -43,12 +43,15 @@ class DownloadController extends Controller
             'url' => ['required', 'url'],
             'platform' => ['required', 'string', 'max:50'],
             'quality' => ['required', 'in:1080p,720p,480p'],
+            // Sent by app 1.0.7 and later, which can save pictures.
+            'photos' => ['sometimes', 'boolean'],
         ]);
 
         $download = Download::create([
             'url' => $validated['url'],
             'platform' => $validated['platform'],
             'quality' => $validated['quality'],
+            'wants_photos' => $validated['photos'] ?? false,
             'status' => 'pending',
             'progress' => 0,
         ]);
