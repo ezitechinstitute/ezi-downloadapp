@@ -76,17 +76,4 @@ class DownloadController extends Controller
             'data' => $download,
         ]);
     }
-
-    /**
-     * Get all download requests.
-     */
-    public function index()
-    {
-        $downloads = Download::latest()->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $downloads,
-        ]);
-    }
 }

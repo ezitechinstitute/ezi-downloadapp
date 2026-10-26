@@ -5,7 +5,7 @@ use App\Http\Controllers\Api\DownloadController;
 
 Route::post('/downloads', [DownloadController::class, 'store']);
 
-Route::get('/downloads', [DownloadController::class, 'index']);
+// No route lists all downloads: it handed every user's links to anyone.
 
 Route::get('/downloads/{download}', [DownloadController::class, 'show']);
 
